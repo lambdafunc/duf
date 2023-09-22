@@ -11,14 +11,19 @@ import (
 	wildcard "github.com/IGLOU-EU/go-wildcard"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/muesli/termenv"
-	terminal "golang.org/x/term"
+	"golang.org/x/term"
 )
 
 var (
-	Version   = ""
+	// Version contains the application version number. It's set via ldflags
+	// when building.
+	Version = ""
+
+	// CommitSHA contains the SHA of the commit that this application was built
+	// against. It's set via ldflags when building.
 	CommitSHA = ""
 
-	term  = termenv.EnvColorProfile()
+	env   = termenv.EnvColorProfile()
 	theme Theme
 
 	groups        = []string{localDevice, networkDevice, fuseDevice, specialDevice, loopsDevice, bindsMount}
@@ -35,7 +40,7 @@ var (
 	output   = flag.String("output", "", "output fields: "+strings.Join(columnIDs(), ", "))
 	sortBy   = flag.String("sort", "mountpoint", "sort output by: "+strings.Join(columnIDs(), ", "))
 	width    = flag.Uint("width", 0, "max output width")
-	themeOpt = flag.String("theme", defaultThemeName(), "color themes: dark, light")
+	themeOpt = flag.String("theme", defaultThemeName(), "color themes: dark, light, ansi")
 	styleOpt = flag.String("style", defaultStyleName(), "style: unicode, ascii")
 
 	availThreshold = flag.String("avail-threshold", "10G,1G", "specifies the coloring threshold (yellow, red) of the avail column, must be integer with optional SI prefixes")
@@ -166,11 +171,9 @@ func main() {
 
 	// print JSON
 	if *jsonOutput {
-		err := renderJSON(m)
-		if err != nil {
+		if err = renderJSON(m); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
-
 		return
 	}
 
@@ -179,6 +182,14 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if env == termenv.ANSI {
+		// enforce ANSI theme for limited color support
+		theme, err = loadTheme("ansi")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 
 	// validate style
@@ -235,7 +246,8 @@ func main() {
 		var mounts []Mount
 
 		for _, v := range flag.Args() {
-			fm, err := findMounts(m, v)
+			var fm []Mount
+			fm, err = findMounts(m, v)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -253,8 +265,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, fmt.Errorf("error parsing avail-threshold: invalid option '%s'", *availThreshold))
 		os.Exit(1)
 	}
-	for _, thresold := range availbilityThresholds {
-		_, err = stringToSize(thresold)
+	for _, threshold := range availbilityThresholds {
+		_, err = stringToSize(threshold)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error parsing avail-threshold:", err)
 			os.Exit(1)
@@ -267,8 +279,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, fmt.Errorf("error parsing usage-threshold: invalid option '%s'", *usageThreshold))
 		os.Exit(1)
 	}
-	for _, thresold := range usageThresholds {
-		_, err = strconv.ParseFloat(thresold, 64)
+	for _, threshold := range usageThresholds {
+		_, err = strconv.ParseFloat(threshold, 64)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error parsing usage-threshold:", err)
 			os.Exit(1)
@@ -283,9 +295,9 @@ func main() {
 	}
 
 	// detect terminal width
-	isTerminal := terminal.IsTerminal(int(os.Stdout.Fd()))
+	isTerminal := term.IsTerminal(int(os.Stdout.Fd()))
 	if isTerminal && *width == 0 {
-		w, _, err := terminal.GetSize(int(os.Stdout.Fd()))
+		w, _, err := term.GetSize(int(os.Stdout.Fd()))
 		if err == nil {
 			*width = uint(w)
 		}
